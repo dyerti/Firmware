@@ -752,6 +752,42 @@ info()
 	return OK;
 }
 
+int
+rate(const char *path)
+{
+	int fd;
+	struct orb_metadata meta;
+	hrt_abstime start, end;
+	bool updated = false;
+	unsigned long count = 0;
+
+	meta.o_size = 0;
+
+	fd = open(path, O_RDONLY);
+
+	if (fd < 0) {
+		fprintf(stderr, "open: failed\n");
+		return ERROR;
+	}
+
+	start = hrt_absolute_time();
+
+	while (count < 1024) {
+		orb_check(fd, &updated);
+
+		if (updated) {
+			orb_copy(&meta, fd, nullptr);
+			count++;
+		}
+	}
+
+	end = hrt_absolute_time();
+
+	printf("%s count: %d (%d)\n", path, count, (end - start) >> 10);
+
+	return OK;
+}
+
 
 } // namespace
 
@@ -806,6 +842,14 @@ uorb_main(int argc, char *argv[])
 	 */
 	if (!strcmp(argv[1], "status"))
 		return info();
+
+	/*
+	 * Test message rates
+	 */
+	if (!strcmp(argv[1], "rate")) {
+		// TODO test argc
+		return rate(argv[2]);
+	}
 
 	fprintf(stderr, "unrecognised command, try 'start', 'test' or 'status'\n");
 	return -EINVAL;
