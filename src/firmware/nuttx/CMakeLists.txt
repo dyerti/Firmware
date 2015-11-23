@@ -42,11 +42,17 @@ add_custom_target(check_weak
 if(NOT ${BOARD} STREQUAL "sim")
 
 
-	px4_nuttx_add_romfs(OUT romfs
-		ROOT ROMFS/px4fmu_common
-		# EXTRAS ${CMAKE_BINARY_DIR}/src/modules/px4iofirmware/${config_io_board}.bin
-		)
-	#add_dependencies(romfs fw_io)
+	if(config_io_board)
+		px4_nuttx_add_romfs(OUT romfs
+			ROOT ROMFS/px4fmu_common
+			EXTRAS ${CMAKE_BINARY_DIR}/src/modules/px4iofirmware/${config_io_board}.bin
+			)
+		add_dependencies(romfs fw_io)
+	else()
+		px4_nuttx_add_romfs(OUT romfs
+				ROOT ROMFS/px4fmu_common
+				)
+	endif()
 
 	set(fw_file
 		${CMAKE_CURRENT_BINARY_DIR}/${OS}-${BOARD}-${LABEL}.px4)
