@@ -80,6 +80,23 @@ __BEGIN_DECLS
  */
 #define GPIO_OTGFS_VBUS		(GPIO_INPUT|GPIO_FLOAT|GPIO_SPEED_100MHz|GPIO_OPENDRAIN|GPIO_PORTA|GPIO_PIN9)
 
+ /* PWM
+ *
+ * Four PWM motor outputs are configured.
+ *
+ * Pins:
+ *
+ * CH1 : PA1  : TIM2_CH2
+ * CH2 : PB11 : TIM2_CH4
+ * CH3 : PA15 : TIM2_CH1
+ * CH4 : PB9  : TIM4_CH4
+ */
+
+#define GPIO_TIM2_CH2OUT	GPIO_TIM2_CH2OUT_1
+#define GPIO_TIM2_CH4OUT	GPIO_TIM2_CH4OUT_2
+#define GPIO_TIM2_CH1OUT	GPIO_TIM2_CH1OUT_2
+#define GPIO_TIM4_CH4OUT	GPIO_TIM4_CH4OUT_1
+
 /* High-resolution timer */
 #define HRT_TIMER		8	/* use timer8 for the HRT */
 #define HRT_TIMER_CHANNEL	1	/* use capture/compare channel */

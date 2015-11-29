@@ -31,12 +31,13 @@
 #
 ############################################################################
 px4_add_module(
-	MODULE drivers__boards__crazyflie
+	MODULE drivers__crazyflie
+	MAIN crazyflie
+	STACK 1200
+	COMPILE_FLAGS
+		-Os
 	SRCS
-		crazyflie_init.c
-		crazyflie_usb.c
-		crazyflie_led.c
-		crazyflie_pwm.c
+		crazyflie.cpp
 	DEPENDS
 		platforms__common
 	)
