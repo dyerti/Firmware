@@ -1486,7 +1486,7 @@ MPU9250::check_registers(void)
 			// if the product_id is wrong then reset the
 			// sensor completely
 			write_reg(MPUREG_PWR_MGMT_1, BIT_H_RESET);
-			write_reg(MPUREG_PWR_MGMT_2, MPU_CLK_SEL_AUTO);
+			write_reg(MPUREG_PWR_MGMT_1, MPU_CLK_SEL_AUTO);
 			// after doing a reset we need to wait a long
 			// time before we do any other register writes
 			// or we will end up with the mpu9250 in a
