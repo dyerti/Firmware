@@ -12,6 +12,7 @@ set(config_module_list
 	drivers/boards/crazyflie
 	drivers/crazyflie
 	drivers/mpu9250
+	drivers/ak8963
 	drivers/gps
 	# drivers/pwm_out_sim
 	# modules/sensors

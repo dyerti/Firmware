@@ -174,8 +174,10 @@
 #define BITS_DLPF_CFG_3600HZ		0x07
 #define BITS_DLPF_CFG_MASK		0x07
 
-#define BIT_RAW_RDY_EN			0x01
-#define BIT_INT_ANYRD_2CLEAR		0x10
+#define BIT_RAW_RDY_EN			(1 << 0)
+
+#define BIT_BYPASS_EN			(1 << 1)
+#define BIT_INT_ANYRD_2CLEAR		(1 << 4)
 
 #define MPU_WHOAMI_9250			0x71
 
@@ -744,7 +746,7 @@ int MPU9250::reset()
 	// INT CFG => Interrupt on Data Ready
 	write_checked_reg(MPUREG_INT_ENABLE, BIT_RAW_RDY_EN);        // INT: Raw data ready
 	usleep(1000);
-	write_checked_reg(MPUREG_INT_PIN_CFG, BIT_INT_ANYRD_2CLEAR); // INT: Clear on any read
+	write_checked_reg(MPUREG_INT_PIN_CFG, BIT_INT_ANYRD_2CLEAR | BIT_BYPASS_EN); // INT: Clear on any read
 	usleep(1000);
 
 	uint8_t retries = 10;
