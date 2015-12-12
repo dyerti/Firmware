@@ -34,7 +34,7 @@
 /**
  * @file board_config.h
  *
- * PX4-STM32F4Discovery internal definitions
+ * PX4-CRAZYFLIE internal definitions
  */
 
 #pragma once
@@ -73,6 +73,18 @@ __BEGIN_DECLS
 			 GPIO_OUTPUT_CLEAR|GPIO_PORTC|GPIO_PIN2)
 #define GPIO_LED4       (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_50MHz|\
 			 GPIO_OUTPUT_CLEAR|GPIO_PORTC|GPIO_PIN3)
+
+/*
+ * I2C busses
+ */
+#define PX4_I2C_BUS_ONBOARD	3
+#define PX4_I2C_BUS_EXPANSION	1
+
+/* Devices on the onboard bus.
+ *
+ * Note that these are unshifted addresses.
+ */
+#define PX4_I2C_OBDEV_MPU9250	0x69
 
 /* USB OTG FS
  *

@@ -63,6 +63,7 @@
 #include <systemlib/conversions.h>
 
 #include <nuttx/arch.h>
+#include <nuttx/wqueue.h>
 #include <nuttx/clock.h>
 
 #include <board_config.h>
@@ -76,13 +77,17 @@
 #include <mathlib/math/filter/LowPassFilter2p.hpp>
 #include <lib/conversion/rotation.h>
 
+#include "mpu9250.h"
+
 #define DIR_READ			0x80
 #define DIR_WRITE			0x00
 
 #define MPU_DEVICE_PATH_ACCEL		"/dev/mpu9250_accel"
 #define MPU_DEVICE_PATH_GYRO		"/dev/mpu9250_gyro"
+#define MPU_DEVICE_PATH_MAG		"/dev/mpu9250_mag"
 #define MPU_DEVICE_PATH_ACCEL_EXT	"/dev/mpu9250_accel_ext"
 #define MPU_DEVICE_PATH_GYRO_EXT	"/dev/mpu9250_gyro_ext"
+#define MPU_DEVICE_PATH_MAG_EXT		"/dev/mpu9250_mag_ext"
 
 // MPU 9250 registers
 #define MPUREG_WHOAMI			0x75
@@ -174,10 +179,10 @@
 
 #define MPU_WHOAMI_9250			0x71
 
-#define MPU9250_ACCEL_DEFAULT_RATE	1000
+#define MPU9250_ACCEL_DEFAULT_RATE	500
 #define MPU9250_ACCEL_MAX_OUTPUT_RATE			280
 #define MPU9250_ACCEL_DEFAULT_DRIVER_FILTER_FREQ 30
-#define MPU9250_GYRO_DEFAULT_RATE	1000
+#define MPU9250_GYRO_DEFAULT_RATE	500
 /* rates need to be the same between accel and gyro */
 #define MPU9250_GYRO_MAX_OUTPUT_RATE			MPU9250_ACCEL_MAX_OUTPUT_RATE
 #define MPU9250_GYRO_DEFAULT_DRIVER_FILTER_FREQ 30
@@ -210,10 +215,10 @@
 
 class MPU9250_gyro;
 
-class MPU9250 : public device::SPI
+class MPU9250 : public device::CDev
 {
 public:
-	MPU9250(int bus, const char *path_accel, const char *path_gyro, spi_dev_e device, enum Rotation rotation);
+	MPU9250(device::Device *interface, enum DeviceBusType interface_bus, const char *path_accel, const char *path_gyro, enum Rotation rotation);
 	virtual ~MPU9250();
 
 	virtual int		init();
@@ -232,6 +237,9 @@ public:
 	void 			test_error();
 
 protected:
+	Device			*_interface;
+	enum DeviceBusType	_interface_bus;
+
 	virtual int		probe();
 
 	friend class MPU9250_gyro;
@@ -243,6 +251,7 @@ private:
 	MPU9250_gyro		*_gyro;
 	uint8_t			_whoami;	/** whoami result */
 
+	work_s			_work;
 	struct hrt_call		_call;
 	unsigned		_call_interval;
 
@@ -293,7 +302,7 @@ private:
 	// this is used to support runtime checking of key
 	// configuration registers to detect SPI bus errors and sensor
 	// reset
-#define MPU9250_NUM_CHECKED_REGISTERS 11
+#define MPU9250_NUM_CHECKED_REGISTERS 9 // TODO TD
 	static const uint8_t	_checked_registers[MPU9250_NUM_CHECKED_REGISTERS];
 	uint8_t			_checked_values[MPU9250_NUM_CHECKED_REGISTERS];
 	uint8_t			_checked_bad[MPU9250_NUM_CHECKED_REGISTERS];
@@ -342,30 +351,21 @@ private:
 	/**
 	 * Read a register from the MPU9250
 	 *
-	 * @param		The register to read.
-	 * @return		The value that was read.
+	 * @param reg		The register to read.
+	 * @param value		The value that was read.
+	 * @param speed		SPI bus frequency (ignored for other interfaces)
+	 * @param return	OK on write success
 	 */
-	uint8_t			read_reg(unsigned reg, uint32_t speed = MPU9250_LOW_BUS_SPEED);
-	uint16_t		read_reg16(unsigned reg);
+	int			read_reg(unsigned reg, uint8_t &value, uint32_t speed = MPU9250_LOW_BUS_SPEED);
 
 	/**
 	 * Write a register in the MPU9250
 	 *
 	 * @param reg		The register to write.
 	 * @param value		The new value to write.
+	 * @param return	OK on write success
 	 */
-	void			write_reg(unsigned reg, uint8_t value);
-
-	/**
-	 * Modify a register in the MPU9250
-	 *
-	 * Bits are cleared before bits are set.
-	 *
-	 * @param reg		The register to modify.
-	 * @param clearbits	Bits in the register to clear.
-	 * @param setbits	Bits in the register to set.
-	 */
-	void			modify_reg(unsigned reg, uint8_t clearbits, uint8_t setbits);
+	int			write_reg(unsigned reg, uint8_t value);
 
 	/**
 	 * Write a register in the MPU9250, updating _checked_values
@@ -393,7 +393,7 @@ private:
 	 *
 	 * @return true if the sensor is not on the main MCU board
 	 */
-	bool			is_external() { return (_bus == EXTERNAL_BUS); }
+	bool			is_external() { return false; } // TODO TD (_interface->_bus == EXTERNAL_BUS); }
 
 	/**
 	 * Measurement self test
@@ -461,12 +461,12 @@ private:
 const uint8_t MPU9250::_checked_registers[MPU9250_NUM_CHECKED_REGISTERS] = { MPUREG_WHOAMI,
 									     MPUREG_PWR_MGMT_1,
 									     MPUREG_PWR_MGMT_2,
-									     MPUREG_USER_CTRL,
+									     //MPUREG_USER_CTRL, // TODO TD
 									     MPUREG_SMPLRT_DIV,
 									     MPUREG_CONFIG,
 									     MPUREG_GYRO_CONFIG,
 									     MPUREG_ACCEL_CONFIG,
-									     MPUREG_ACCEL_CONFIG2,
+									     //MPUREG_ACCEL_CONFIG2, // TODO TD
 									     MPUREG_INT_ENABLE,
 									     MPUREG_INT_PIN_CFG
 									   };
@@ -506,10 +506,13 @@ private:
 /** driver 'main' command */
 extern "C" { __EXPORT int mpu9250_main(int argc, char *argv[]); }
 
-MPU9250::MPU9250(int bus, const char *path_accel, const char *path_gyro, spi_dev_e device, enum Rotation rotation) :
-	SPI("MPU9250", path_accel, bus, device, SPIDEV_MODE3, MPU9250_LOW_BUS_SPEED),
+MPU9250::MPU9250(device::Device *interface, enum DeviceBusType interface_bus, const char *path_accel, const char *path_gyro, enum Rotation rotation) :
+	CDev("MPU9250", path_accel),
+	_interface(interface),
+	_interface_bus(interface_bus),
 	_gyro(new MPU9250_gyro(this, path_gyro)),
 	_whoami(0),
+	_work{},
 	_call{},
 	_call_interval(0),
 	_accel_reports(nullptr),
@@ -577,6 +580,7 @@ MPU9250::MPU9250(int bus, const char *path_accel, const char *path_gyro, spi_dev
 	_gyro_scale.z_scale  = 1.0f;
 
 	memset(&_call, 0, sizeof(_call));
+	memset(&_work, 0, sizeof(_work));
 }
 
 MPU9250::~MPU9250()
@@ -616,14 +620,15 @@ MPU9250::init()
 {
 	int ret;
 
-	/* do SPI init (and probe) first */
-	ret = SPI::init();
+	ret = CDev::init();
 
-	/* if probe/setup failed, bail now */
 	if (ret != OK) {
-		DEVICE_DEBUG("SPI setup failed");
-		return ret;
+		DEVICE_DEBUG("CDev setup failed");
+		goto out;
 	}
+
+	// Probe to set check_values to the correct value
+	probe();
 
 	/* allocate basic report buffers */
 	_accel_reports = new ringbuffer::RingBuffer(2, sizeof(accel_report));
@@ -743,12 +748,15 @@ int MPU9250::reset()
 	usleep(1000);
 
 	uint8_t retries = 10;
+	uint8_t value = 0;
 
 	while (retries--) {
 		bool all_ok = true;
 
+		// TODO TD handle all instances of read_reg/write_reg failures
 		for (uint8_t i = 0; i < MPU9250_NUM_CHECKED_REGISTERS; i++) {
-			if (read_reg(_checked_registers[i]) != _checked_values[i]) {
+			read_reg(_checked_registers[i], value);
+			if (value != _checked_values[i]) {
 				write_reg(_checked_registers[i], _checked_values[i]);
 				all_ok = false;
 			}
@@ -766,7 +774,7 @@ int
 MPU9250::probe()
 {
 	/* look for device ID */
-	_whoami = read_reg(MPUREG_WHOAMI);
+	read_reg(MPUREG_WHOAMI, _whoami);
 
 	// verify product revision
 	switch (_whoami) {
@@ -1010,7 +1018,8 @@ MPU9250::test_error()
 	// development as a handy way to test the reset logic
 	uint8_t data[16];
 	memset(data, 0, sizeof(data));
-	transfer(data, data, sizeof(data));
+	// TODO TD cannot replicate this currently
+	// transfer(data, data, sizeof(data));
 	::printf("error triggered\n");
 	print_registers();
 }
@@ -1081,7 +1090,7 @@ MPU9250::ioctl(struct file *filp, int cmd, unsigned long arg)
 
 			/* set default/max polling rate */
 			case SENSOR_POLLRATE_MAX:
-				return ioctl(filp, SENSORIOCSPOLLRATE, 1000);
+				return ioctl(filp, SENSORIOCSPOLLRATE, 500);
 
 			case SENSOR_POLLRATE_DEFAULT:
 				return ioctl(filp, SENSORIOCSPOLLRATE, MPU9250_ACCEL_DEFAULT_RATE);
@@ -1225,7 +1234,8 @@ MPU9250::ioctl(struct file *filp, int cmd, unsigned long arg)
 
 	default:
 		/* give it to the superclass */
-		return SPI::ioctl(filp, cmd, arg);
+		// TODO TD return SPI::ioctl(filp, cmd, arg);
+		return 0;
 	}
 }
 
@@ -1316,59 +1326,38 @@ MPU9250::gyro_ioctl(struct file *filp, int cmd, unsigned long arg)
 
 	default:
 		/* give it to the superclass */
-		return SPI::ioctl(filp, cmd, arg);
+		// TODO TD return SPI::ioctl(filp, cmd, arg);
+		return 0;
 	}
 }
 
-uint8_t
-MPU9250::read_reg(unsigned reg, uint32_t speed)
+int
+MPU9250::read_reg(unsigned reg, uint8_t &value, uint32_t speed)
 {
-	uint8_t cmd[2] = { (uint8_t)(reg | DIR_READ), 0};
+	uint8_t buf = value;
 
-	// general register transfer at low clock speed
-	set_frequency(speed);
+	if (false) { // TODO TD _interface == SPI) {
+		// general register transfer at specified clock speed
+		//_interface->set_frequency(speed);
+	}
 
-	transfer(cmd, cmd, sizeof(cmd));
+	int ret = _interface->read(reg, &buf, 1);
+	value = buf;
 
-	return cmd[1];
+	return ret;
 }
 
-uint16_t
-MPU9250::read_reg16(unsigned reg)
-{
-	uint8_t cmd[3] = { (uint8_t)(reg | DIR_READ), 0, 0 };
-
-	// general register transfer at low clock speed
-	set_frequency(MPU9250_LOW_BUS_SPEED);
-
-	transfer(cmd, cmd, sizeof(cmd));
-
-	return (uint16_t)(cmd[1] << 8) | cmd[2];
-}
-
-void
+int
 MPU9250::write_reg(unsigned reg, uint8_t value)
 {
-	uint8_t	cmd[2];
+	uint8_t buf = value;
 
-	cmd[0] = reg | DIR_WRITE;
-	cmd[1] = value;
+	if (false) { // TODO TD _interface == SPI) {
+		// general register transfer at low clock speed
+		//_interface->set_frequency(MPU9250_LOW_BUS_SPEED);
+	}
 
-	// general register transfer at low clock speed
-	set_frequency(MPU9250_LOW_BUS_SPEED);
-
-	transfer(cmd, nullptr, sizeof(cmd));
-}
-
-void
-MPU9250::modify_reg(unsigned reg, uint8_t clearbits, uint8_t setbits)
-{
-	uint8_t	val;
-
-	val = read_reg(reg);
-	val &= ~clearbits;
-	val |= setbits;
-	write_reg(reg, val);
+	return _interface->write(reg, &buf, 1);
 }
 
 void
@@ -1430,16 +1419,29 @@ MPU9250::start()
 	_gyro_reports->flush();
 
 	/* start polling at the specified rate */
-	hrt_call_every(&_call,
-		       1000,
-		       _call_interval - MPU9250_TIMER_REDUCTION,
-		       (hrt_callout)&MPU9250::measure_trampoline, this);
+	if (_interface_bus == DeviceBusType_SPI) {
+		hrt_call_every(&_call,
+			       1000,
+			       _call_interval - MPU9250_TIMER_REDUCTION,
+			       (hrt_callout)&MPU9250::measure_trampoline, this);
+	}
+
+	if (_interface_bus == DeviceBusType_I2C) {
+		work_queue(HPWORK, &_work, (worker_t)&MPU9250::measure_trampoline, this, 1);
+	}
+
 }
 
 void
 MPU9250::stop()
 {
-	hrt_cancel(&_call);
+	if (_interface_bus == DeviceBusType_SPI) {
+		hrt_cancel(&_call);
+	}
+
+	if (_interface_bus == DeviceBusType_I2C) {
+		work_cancel(HPWORK, &_work);
+	}
 }
 
 void
@@ -1449,6 +1451,15 @@ MPU9250::measure_trampoline(void *arg)
 
 	/* make another measurement */
 	dev->measure();
+
+	/* schedule a fresh cycle call when the measurement is done */
+	if (dev->_interface_bus == DeviceBusType_I2C) {
+		work_queue(HPWORK,
+			   &dev->_work,
+			   (worker_t)&MPU9250::measure_trampoline,
+			   dev,
+			   USEC2TICK(dev->_call_interval- 1000));
+	}
 }
 
 void
@@ -1465,8 +1476,8 @@ MPU9250::check_registers(void)
 	*/
 	uint8_t v;
 
-	if ((v = read_reg(_checked_registers[_checked_next], MPU9250_HIGH_BUS_SPEED)) !=
-	    _checked_values[_checked_next]) {
+	read_reg(_checked_registers[_checked_next], v, MPU9250_HIGH_BUS_SPEED);
+	if (v != _checked_values[_checked_next]) {
 		_checked_bad[_checked_next] = v;
 
 		/*
@@ -1485,6 +1496,7 @@ MPU9250::check_registers(void)
 		if (_register_wait == 0 || _checked_next == 0) {
 			// if the product_id is wrong then reset the
 			// sensor completely
+			// TODO TD call reset here instead?
 			write_reg(MPUREG_PWR_MGMT_1, BIT_H_RESET);
 			write_reg(MPUREG_PWR_MGMT_1, MPU_CLK_SEL_AUTO);
 			// after doing a reset we need to wait a long
@@ -1536,12 +1548,12 @@ MPU9250::measure()
 	/*
 	 * Fetch the full set of measurements from the MPU9250 in one pass.
 	 */
-	mpu_report.cmd = DIR_READ | MPUREG_INT_STATUS;
+	mpu_report.cmd = MPUREG_INT_STATUS;
 
 	// sensor transfer at high clock speed
-	set_frequency(MPU9250_HIGH_BUS_SPEED);
+	// TODO TD _interface->set_frequency(MPU9250_HIGH_BUS_SPEED);
 
-	if (OK != transfer((uint8_t *)&mpu_report, ((uint8_t *)&mpu_report), sizeof(mpu_report))) {
+	if (OK != _interface->read(mpu_report.cmd, ((uint8_t *)&mpu_report.status), sizeof(mpu_report) - 1)) {
 		return;
 	}
 
@@ -1773,7 +1785,8 @@ MPU9250::print_info()
 	::printf("checked_next: %u\n", _checked_next);
 
 	for (uint8_t i = 0; i < MPU9250_NUM_CHECKED_REGISTERS; i++) {
-		uint8_t v = read_reg(_checked_registers[i], MPU9250_HIGH_BUS_SPEED);
+		uint8_t v;
+		read_reg(_checked_registers[i], v, MPU9250_HIGH_BUS_SPEED);
 
 		if (v != _checked_values[i]) {
 			::printf("reg %02x:%02x should be %02x\n",
@@ -1799,7 +1812,9 @@ MPU9250::print_registers()
 	printf("MPU9250 registers\n");
 
 	for (uint8_t reg = 0; reg <= 126; reg++) {
-		uint8_t v = read_reg(reg);
+		uint8_t v;
+		read_reg(reg, v);
+
 		printf("%02x:%02x ", (unsigned)reg, (unsigned)v);
 
 		if (reg % 13 == 0) {
@@ -1878,18 +1893,167 @@ MPU9250_gyro::ioctl(struct file *filp, int cmd, unsigned long arg)
 namespace mpu9250
 {
 
-MPU9250	*g_dev_int; // on internal bus
-MPU9250	*g_dev_ext; // on external bus
+enum MPU9250_BUS {
+	MPU9250_BUS_ALL = 0,
+	MPU9250_BUS_I2C_INTERNAL,
+	MPU9250_BUS_I2C_EXTERNAL,
+	MPU9250_BUS_SPI_INTERNAL,
+	MPU9250_BUS_SPI_EXTERNAL
+};
 
-void	start(bool, enum Rotation);
-void	stop(bool);
-void	test(bool);
-void	reset(bool);
-void	info(bool);
-void	regdump(bool);
-void	testerror(bool);
+/*
+  list of supported bus configurations
+ */
+struct mpu9250_bus_option {
+	enum MPU9250_BUS busid;
+	const char *accel_devpath;
+	const char *gyro_devpath;
+	MPU9250_constructor interface_constructor;
+	uint8_t busnum;
+	MPU9250	*dev;
+} bus_options[] = {
+	{ MPU9250_BUS_I2C_EXTERNAL, "/dev/mpu9250_accel_ext", "/dev/mpu9250_gyro_ext",
+	  &MPU9250_I2C_interface, PX4_I2C_BUS_EXPANSION, NULL },
+#ifdef PX4_I2C_BUS_ONBOARD
+	{ MPU9250_BUS_I2C_INTERNAL, "/dev/mpu9250_accel", "/dev/mpu9250_gyro",
+	  &MPU9250_I2C_interface, PX4_I2C_BUS_ONBOARD, NULL },
+#endif
+#ifdef PX4_SPIDEV_HMC
+	{ MPU9250_BUS_SPI_INTERNAL, "/dev/mpu9250_accel_ext", "/dev/mpu9250_gyro_ext",
+	  &MPU9250_SPI_interface, PX4_SPI_BUS_SENSORS, NULL },
+#endif
+};
+#define NUM_BUS_OPTIONS (sizeof(bus_options)/sizeof(bus_options[0]))
+
+void	start(enum MPU9250_BUS busid, enum Rotation rotation);
+bool	start_bus(struct mpu9250_bus_option &bus, enum Rotation rotation);
+struct mpu9250_bus_option &find_bus(enum MPU9250_BUS busid);
+void	stop(enum MPU9250_BUS busid);
+void	test(enum MPU9250_BUS busid);
+void	reset(enum MPU9250_BUS busid);
+void	info(enum MPU9250_BUS busid);
+void	regdump(enum MPU9250_BUS busid);
+void	testerror(enum MPU9250_BUS busid);
 void	usage();
 
+typedef device::Device::DeviceBusType DBType;
+
+DBType get_bustype(struct mpu9250_bus_option &bus);
+DBType get_bustype(struct mpu9250_bus_option &bus)
+{
+	DBType t = DBType::DeviceBusType_UNKNOWN;
+
+	switch (bus.busid)
+	{
+	case MPU9250_BUS_I2C_EXTERNAL:
+	case MPU9250_BUS_I2C_INTERNAL:
+		t = DBType::DeviceBusType_I2C;
+		break;
+	case MPU9250_BUS_SPI_EXTERNAL:
+	case MPU9250_BUS_SPI_INTERNAL:
+		t = DBType::DeviceBusType_SPI;
+		break;
+	case MPU9250_BUS_ALL:
+	default:
+		errx(1, "we should never get here");
+		break;
+	}
+
+	return t;
+}
+
+/**
+ * start driver for a specific bus option
+ */
+bool
+start_bus(struct mpu9250_bus_option &bus, enum Rotation rotation)
+{
+	if (bus.dev != nullptr) {
+		errx(1, "bus option already started");
+	}
+
+	device::Device *interface = bus.interface_constructor(bus.busnum);
+	DBType interface_type = get_bustype(bus);
+
+	if (interface->init() != OK) {
+		delete interface;
+		warnx("no device on bus %u", (unsigned)bus.busid);
+		return false;
+	}
+
+	bus.dev = new MPU9250(interface, interface_type, bus.accel_devpath, bus.gyro_devpath, rotation);
+
+	if (bus.dev != nullptr && OK != bus.dev->init()) {
+		delete bus.dev;
+		bus.dev = NULL;
+		return false;
+	}
+
+	int fd = open(bus.accel_devpath, O_RDONLY);
+
+	if (fd < 0) {
+		return false;
+	}
+
+	if (ioctl(fd, SENSORIOCSPOLLRATE, SENSOR_POLLRATE_DEFAULT) < 0) {
+		close(fd);
+		errx(1, "Failed to setup poll rate");
+	}
+
+	close(fd);
+
+	return true;
+}
+
+
+/**
+ * Start the driver.
+ *
+ * This function call only returns once the driver
+ * is either successfully up and running or failed to start.
+ */
+void
+start(enum MPU9250_BUS busid, enum Rotation rotation)
+{
+	bool started = false;
+
+	for (unsigned i = 0; i < NUM_BUS_OPTIONS; i++) {
+		if (busid == MPU9250_BUS_ALL && bus_options[i].dev != NULL) {
+			// this device is already started
+			continue;
+		}
+
+		if (busid != MPU9250_BUS_ALL && bus_options[i].busid != busid) {
+			// not the one that is asked for
+			continue;
+		}
+
+		started |= start_bus(bus_options[i], rotation);
+	}
+
+	if (!started) {
+		exit(1);
+	}
+
+	exit(0);
+}
+
+/**
+ * find a bus structure for a busid
+ */
+struct mpu9250_bus_option &find_bus(enum MPU9250_BUS busid)
+{
+	for (unsigned i = 0; i < NUM_BUS_OPTIONS; i++) {
+		if ((busid == MPU9250_BUS_ALL ||
+		     busid == bus_options[i].busid) && bus_options[i].dev != NULL) {
+			return bus_options[i];
+		}
+	}
+
+	errx(1, "bus %u not started", (unsigned)busid);
+}
+
+#if 0
 /**
  * Start the driver.
  *
@@ -1897,7 +2061,7 @@ void	usage();
  * or failed to detect the sensor.
  */
 void
-start(bool external_bus, enum Rotation rotation)
+start(enum MPU9250_BUS busid, enum Rotation rotation)
 {
 	int fd;
 	MPU9250 **g_dev_ptr = external_bus ? &g_dev_ext : &g_dev_int;
@@ -1910,16 +2074,19 @@ start(bool external_bus, enum Rotation rotation)
 		errx(0, "already started");
 	}
 
+	// TODO TD
+	device::Device *interface = NULL;
+
 	/* create the driver */
 	if (external_bus) {
 #ifdef PX4_SPI_BUS_EXT
-		*g_dev_ptr = new MPU9250(PX4_SPI_BUS_EXT, path_accel, path_gyro, (spi_dev_e)PX4_SPIDEV_EXT_MPU, rotation);
+		*g_dev_ptr = new MPU9250(interface, path_accel, path_gyro, rotation);
 #else
 		errx(0, "External SPI not available");
 #endif
 
 	} else {
-		*g_dev_ptr = new MPU9250(PX4_SPI_BUS_SENSORS, path_accel, path_gyro, (spi_dev_e)PX4_SPIDEV_MPU, rotation);
+		*g_dev_ptr = new MPU9250(interface, path_accel, path_gyro, rotation);
 	}
 
 	if (*g_dev_ptr == nullptr) {
@@ -1953,15 +2120,16 @@ fail:
 
 	errx(1, "driver start failed");
 }
+#endif
 
 void
-stop(bool external_bus)
+stop(enum MPU9250_BUS busid)
 {
-	MPU9250 **g_dev_ptr = external_bus ? &g_dev_ext : &g_dev_int;
+	struct mpu9250_bus_option &bus = find_bus(busid);
 
-	if (*g_dev_ptr != nullptr) {
-		delete *g_dev_ptr;
-		*g_dev_ptr = nullptr;
+	if (bus.dev != nullptr) {
+		delete bus.dev;
+		bus.dev = nullptr;
 
 	} else {
 		/* warn, but not an error */
@@ -1977,10 +2145,11 @@ stop(bool external_bus)
  * and automatic modes.
  */
 void
-test(bool external_bus)
+test(enum MPU9250_BUS busid)
 {
-	const char *path_accel = external_bus ? MPU_DEVICE_PATH_ACCEL_EXT : MPU_DEVICE_PATH_ACCEL;
-	const char *path_gyro  = external_bus ? MPU_DEVICE_PATH_GYRO_EXT : MPU_DEVICE_PATH_GYRO;
+	struct mpu9250_bus_option &bus = find_bus(busid);
+	const char *path_accel = bus.accel_devpath;
+	const char *path_gyro  = bus.gyro_devpath;
 	accel_report a_report;
 	gyro_report g_report;
 	ssize_t sz;
@@ -2000,9 +2169,9 @@ test(bool external_bus)
 	}
 
 	/* reset to manual polling */
-	if (ioctl(fd, SENSORIOCSPOLLRATE, SENSOR_POLLRATE_MANUAL) < 0) {
-		err(1, "reset to manual polling");
-	}
+	//if (ioctl(fd, SENSORIOCSPOLLRATE, SENSOR_POLLRATE_MANUAL) < 0) {
+	//	err(1, "reset to manual polling");
+	//}
 
 	/* do a simple demand read */
 	sz = read(fd, &a_report, sizeof(a_report));
@@ -2034,9 +2203,9 @@ test(bool external_bus)
 	warnx("gyro x: \t% 9.5f\trad/s", (double)g_report.x);
 	warnx("gyro y: \t% 9.5f\trad/s", (double)g_report.y);
 	warnx("gyro z: \t% 9.5f\trad/s", (double)g_report.z);
-	warnx("gyro x: \t%d\traw", (int)g_report.x_raw);
-	warnx("gyro y: \t%d\traw", (int)g_report.y_raw);
-	warnx("gyro z: \t%d\traw", (int)g_report.z_raw);
+	warnx("gyro x:  \t%d\traw 0x%0x", (short)g_report.x_raw, (unsigned short)g_report.x_raw);
+	warnx("gyro y:  \t%d\traw 0x%0x", (short)g_report.y_raw, (unsigned short)g_report.y_raw);
+	warnx("gyro z:  \t%d\traw 0x%0x", (short)g_report.z_raw, (unsigned short)g_report.z_raw);
 	warnx("gyro range: %8.4f rad/s (%d deg/s)", (double)g_report.range_rad_s,
 	      (int)((g_report.range_rad_s / M_PI_F) * 180.0f + 0.5f));
 
@@ -2044,16 +2213,16 @@ test(bool external_bus)
 	warnx("temp:  \t%d\traw 0x%0x", (short)a_report.temperature_raw, (unsigned short)a_report.temperature_raw);
 
 	/* reset to default polling */
-	if (ioctl(fd, SENSORIOCSPOLLRATE, SENSOR_POLLRATE_DEFAULT) < 0) {
-		err(1, "reset to default polling");
-	}
+	//if (ioctl(fd, SENSORIOCSPOLLRATE, SENSOR_POLLRATE_DEFAULT) < 0) {
+	//	err(1, "reset to default polling");
+	//}
 
 	close(fd);
 	close(fd_gyro);
 
 	/* XXX add poll-rate tests here too */
 
-	reset(external_bus);
+	reset(busid);
 	errx(0, "PASS");
 }
 
@@ -2061,9 +2230,10 @@ test(bool external_bus)
  * Reset the driver.
  */
 void
-reset(bool external_bus)
+reset(enum MPU9250_BUS busid)
 {
-	const char *path_accel = external_bus ? MPU_DEVICE_PATH_ACCEL_EXT : MPU_DEVICE_PATH_ACCEL;
+	struct mpu9250_bus_option &bus = find_bus(busid);
+	const char *path_accel = bus.accel_devpath;
 	int fd = open(path_accel, O_RDONLY);
 
 	if (fd < 0) {
@@ -2087,16 +2257,16 @@ reset(bool external_bus)
  * Print a little info about the driver.
  */
 void
-info(bool external_bus)
+info(enum MPU9250_BUS busid)
 {
-	MPU9250 **g_dev_ptr = external_bus ? &g_dev_ext : &g_dev_int;
+	struct mpu9250_bus_option &bus = find_bus(busid);
 
-	if (*g_dev_ptr == nullptr) {
+	if (bus.dev == nullptr) {
 		errx(1, "driver not running");
 	}
 
-	printf("state @ %p\n", *g_dev_ptr);
-	(*g_dev_ptr)->print_info();
+	printf("state @ %p\n", bus.dev);
+	bus.dev->print_info();
 
 	exit(0);
 }
@@ -2105,16 +2275,16 @@ info(bool external_bus)
  * Dump the register information
  */
 void
-regdump(bool external_bus)
+regdump(enum MPU9250_BUS busid)
 {
-	MPU9250 **g_dev_ptr = external_bus ? &g_dev_ext : &g_dev_int;
+	struct mpu9250_bus_option &bus = find_bus(busid);
 
-	if (*g_dev_ptr == nullptr) {
+	if (bus.dev == nullptr) {
 		errx(1, "driver not running");
 	}
 
-	printf("regdump @ %p\n", *g_dev_ptr);
-	(*g_dev_ptr)->print_registers();
+	printf("regdump @ %p\n", bus.dev);
+	bus.dev->print_registers();
 
 	exit(0);
 }
@@ -2123,15 +2293,15 @@ regdump(bool external_bus)
  * deliberately produce an error to test recovery
  */
 void
-testerror(bool external_bus)
+testerror(enum MPU9250_BUS busid)
 {
-	MPU9250 **g_dev_ptr = external_bus ? &g_dev_ext : &g_dev_int;
+	struct mpu9250_bus_option &bus = find_bus(busid);
 
-	if (*g_dev_ptr == nullptr) {
+	if (bus.dev == nullptr) {
 		errx(1, "driver not running");
 	}
 
-	(*g_dev_ptr)->test_error();
+	bus.dev->test_error();
 
 	exit(0);
 }
@@ -2150,15 +2320,26 @@ usage()
 int
 mpu9250_main(int argc, char *argv[])
 {
-	bool external_bus = false;
 	int ch;
+	enum mpu9250::MPU9250_BUS busid = mpu9250::MPU9250_BUS_ALL;
 	enum Rotation rotation = ROTATION_NONE;
 
 	/* jump over start/off/etc and look at options first */
-	while ((ch = getopt(argc, argv, "XR:")) != EOF) {
+	while ((ch = getopt(argc, argv, "XISR:")) != EOF) {
 		switch (ch) {
+#ifdef PX4_I2C_BUS_ONBOARD
+
+		case 'I':
+			busid = mpu9250::MPU9250_BUS_I2C_INTERNAL;
+			break;
+#endif
+
 		case 'X':
-			external_bus = true;
+			busid = mpu9250::MPU9250_BUS_I2C_EXTERNAL;
+			break;
+
+		case 'S':
+			busid = mpu9250::MPU9250_BUS_SPI_INTERNAL;
 			break;
 
 		case 'R':
@@ -2178,43 +2359,43 @@ mpu9250_main(int argc, char *argv[])
 
 	 */
 	if (!strcmp(verb, "start")) {
-		mpu9250::start(external_bus, rotation);
+		mpu9250::start(busid, rotation);
 	}
 
 	if (!strcmp(verb, "stop")) {
-		mpu9250::stop(external_bus);
+		mpu9250::stop(busid);
 	}
 
 	/*
 	 * Test the driver/device.
 	 */
 	if (!strcmp(verb, "test")) {
-		mpu9250::test(external_bus);
+		mpu9250::test(busid);
 	}
 
 	/*
 	 * Reset the driver.
 	 */
 	if (!strcmp(verb, "reset")) {
-		mpu9250::reset(external_bus);
+		mpu9250::reset(busid);
 	}
 
 	/*
 	 * Print driver information.
 	 */
 	if (!strcmp(verb, "info")) {
-		mpu9250::info(external_bus);
+		mpu9250::info(busid);
 	}
 
 	/*
 	 * Print register information.
 	 */
 	if (!strcmp(verb, "regdump")) {
-		mpu9250::regdump(external_bus);
+		mpu9250::regdump(busid);
 	}
 
 	if (!strcmp(verb, "testerror")) {
-		mpu9250::testerror(external_bus);
+		mpu9250::testerror(busid);
 	}
 
 	mpu9250::usage();
