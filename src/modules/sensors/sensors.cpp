@@ -1033,14 +1033,14 @@ Sensors::baro_init()
 int
 Sensors::adc_init()
 {
-
+/*
 	_fd_adc = px4_open(ADC0_DEVICE_PATH, O_RDONLY | O_NONBLOCK);
 
 	if (_fd_adc < 0) {
 		warnx("FATAL: no ADC found: %s", ADC0_DEVICE_PATH);
 		return ERROR;
 	}
-
+*/
 	return OK;
 }
 
@@ -1609,6 +1609,7 @@ Sensors::rc_parameter_map_poll(bool forced)
 void
 Sensors::adc_poll(struct sensor_combined_s &raw)
 {
+#if 0
 	/* only read if publishing */
 	if (!_publishing) {
 		return;
@@ -1723,6 +1724,7 @@ Sensors::adc_poll(struct sensor_combined_s &raw)
 			}
 		}
 	}
+#endif
 }
 
 float
@@ -2196,7 +2198,7 @@ Sensors::task_main()
 		}
 
 		/* check battery voltage */
-		adc_poll(raw);
+		//adc_poll(raw);
 
 		diff_pres_poll(raw);
 

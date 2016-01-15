@@ -16,7 +16,7 @@ set(config_module_list
 	drivers/lps25h
 	drivers/gps
 	# drivers/pwm_out_sim
-	# modules/sensors
+	modules/sensors
 
 	#
 	# System commands
