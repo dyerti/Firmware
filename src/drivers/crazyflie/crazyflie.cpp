@@ -171,6 +171,9 @@ Crazyflie	*g_crazyflie;
 
 } // namespace
 
+#define CRAZYFLIE_PWM_MIN 0
+#define CRAZYFLIE_PWM_MAX 255
+
 Crazyflie::Crazyflie() :
 	CDev("crazyflie", CRAZYFLIE_DEVICE_PATH),
 	_current_update_rate(0),
@@ -194,8 +197,8 @@ Crazyflie::Crazyflie() :
 	_num_disarmed_set(0)
 {
 	for (unsigned i = 0; i < _max_actuators; i++) {
-		_min_pwm[i] = PWM_DEFAULT_MIN;
-		_max_pwm[i] = PWM_DEFAULT_MAX;
+		_min_pwm[i] = CRAZYFLIE_PWM_MIN;
+		_max_pwm[i] = CRAZYFLIE_PWM_MAX;
 	}
 
 	_control_topics[0] = ORB_ID(actuator_controls_0);
