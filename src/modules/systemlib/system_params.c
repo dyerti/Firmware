@@ -44,7 +44,7 @@
  *
  * @group System
  */
-PARAM_DEFINE_INT32(SYS_AUTOSTART, 0);
+PARAM_DEFINE_INT32(SYS_AUTOSTART, 4900);
 
 /**
  * Automatically configure default values.
