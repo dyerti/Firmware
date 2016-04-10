@@ -43,6 +43,8 @@ set(config_module_list
 	modules/mavlink
 	modules/land_detector
 
+	modules/dummy
+
 	#
 	# Estimation modules (EKF/ SO3 / other filters)
 	#

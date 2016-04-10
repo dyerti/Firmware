@@ -11,12 +11,6 @@
 sercon
 
 #
-# Start nsh on ACM
-#
-nshterm /dev/ttyACM0 &
-
-
-#
 # Default to auto-start mode.
 #
 set MODE autostart
